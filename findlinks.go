@@ -1,9 +1,11 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
+	"runtime/pprof"
 )
 
 type WorkTask struct {
@@ -25,11 +27,22 @@ func crawl(url string) []string {
 	return list
 }
 
+var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
+
 func main() {
+	flag.Parse()
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
+
 	worklist := make(chan WorkTask)    // lists of URLs, may have duplicates
 	unseenLinks := make(chan LinkInfo) // de-duplicated URLs
 
-	newWork := make(chan struct{})
 	workDone := make(chan struct{})
 	workCount := 0
 	workDoneCount := 0
@@ -39,8 +52,6 @@ func main() {
 	go func() {
 		for {
 			select {
-			case <-newWork:
-				workCount++
 			case <-workDone:
 				workDoneCount++
 				if workDoneCount == workCount {
@@ -53,9 +64,9 @@ func main() {
 	}()
 
 	// Add command-line arguments to worklist.
+	workCount++
 	go func() {
-		newWork <- struct{}{}
-		worklist <- WorkTask{os.Args[1:], 1}
+		worklist <- WorkTask{flag.Args(), 1}
 	}()
 
 	// Create 20 crawler goroutines to fetch each unseen link.
@@ -80,9 +91,9 @@ func main() {
 		}
 		for _, link := range list.links {
 			if !seen[link] {
+				workCount++
 				linkCount++
 				seen[link] = true
-				newWork <- struct{}{}
 				unseenLinks <- LinkInfo{link, list.deep}
 			}
 		}
